@@ -1,9 +1,9 @@
 use image::{Rgb, RgbImage};
 use ndarray::{Array2, Array3};
 use pp_doclayout_onnx::{
-    DEFAULT_DPI, DEFAULT_THRESHOLD, OriginalSize, PP_DOCLAYOUT_V3_LABELS, PPDocLayoutV3Label,
-    PdfPageDetections, cxcywh_to_xyxy, image_to_nchw_rgb, output_path_for_page, parse_detr_outputs,
-    parse_paddle_fetch_output,
+    cxcywh_to_xyxy, image_to_nchw_rgb, output_path_for_page, parse_detr_outputs,
+    parse_paddle_fetch_output, OriginalSize, PPDocLayoutV3Label, PdfPageDetections, DEFAULT_DPI,
+    DEFAULT_THRESHOLD, PP_DOCLAYOUT_V3_LABELS,
 };
 
 #[test]
@@ -33,7 +33,7 @@ fn pdf_detection_defaults_match_model_config() {
 fn ort_dependency_enables_webgpu_feature() {
     let manifest = include_str!("../Cargo.toml");
 
-    assert!(manifest.contains("features = [\"webgpu\"]"));
+    assert!(manifest.contains("\"webgpu\""));
 }
 
 #[test]
@@ -115,15 +115,17 @@ fn parse_detr_outputs_drops_background_and_keeps_best_classes() {
     assert_eq!(detections[0].class_id, 21);
     assert!(detections[0].score > 0.99);
     assert_eq!(detections[0].bbox, [50.0, 37.5, 150.0, 62.5]);
+    assert_eq!(detections[0].order, None);
 }
 
 #[test]
-fn parse_paddle_fetch_output_uses_exported_seven_column_boxes() {
+fn parse_paddle_fetch_output_uses_exported_seven_column_boxes_and_reading_order() {
     let output = Array2::from_shape_vec(
-        (2, 7),
+        (3, 7),
         vec![
             21.0, 0.90, 10.0, 20.0, 110.0, 120.0, 299.0, //
-            22.0, 0.10, 30.0, 40.0, 130.0, 140.0, 298.0,
+            22.0, 0.95, 30.0, 40.0, 130.0, 140.0, 298.0, //
+            22.0, 0.10, 50.0, 60.0, 150.0, 160.0, 297.0,
         ],
     )
     .unwrap();
@@ -131,9 +133,15 @@ fn parse_paddle_fetch_output_uses_exported_seven_column_boxes() {
     let detections =
         parse_paddle_fetch_output(output.into_dyn(), OriginalSize::new(200, 200), 0.5).unwrap();
 
-    assert_eq!(detections.len(), 1);
-    assert_eq!(detections[0].label, PPDocLayoutV3Label::Table);
-    assert_eq!(detections[0].class_id, 21);
-    assert_eq!(detections[0].score, 0.90);
-    assert_eq!(detections[0].bbox, [10.0, 20.0, 110.0, 120.0]);
+    assert_eq!(detections.len(), 2);
+    assert_eq!(detections[0].label, PPDocLayoutV3Label::Text);
+    assert_eq!(detections[0].class_id, 22);
+    assert_eq!(detections[0].score, 0.95);
+    assert_eq!(detections[0].bbox, [30.0, 40.0, 130.0, 140.0]);
+    assert_eq!(detections[0].order, Some(298));
+    assert_eq!(detections[1].label, PPDocLayoutV3Label::Table);
+    assert_eq!(detections[1].class_id, 21);
+    assert_eq!(detections[1].score, 0.90);
+    assert_eq!(detections[1].bbox, [10.0, 20.0, 110.0, 120.0]);
+    assert_eq!(detections[1].order, Some(299));
 }

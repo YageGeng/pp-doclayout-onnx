@@ -2,9 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
-use pp_doclayout_onnx::{
-    DEFAULT_OUTPUT_DIR, MODEL_URL, OrtDocLayout, detect_pdf_to_output_dir, inspect_model,
-};
+use pp_doclayout_onnx::{detect_pdf_to_output_dir, OrtDocLayout, DEFAULT_OUTPUT_DIR, MODEL_URL};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -19,17 +17,12 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Print ONNX model input and output metadata.
-    Inspect {
-        /// Path to inference.onnx.
-        #[arg(long, default_value = "models/inference.onnx")]
-        model: PathBuf,
-    },
     /// Detect document layout regions in every page of a PDF.
     Detect {
         /// Input PDF path.
         input_pdf: PathBuf,
         /// Path to inference.onnx.
+        #[arg(long, default_value = "models/inference.onnx")]
         model: PathBuf,
     },
     /// Dump the first f32 values from model outputs for debugging exporter formats.
@@ -50,14 +43,11 @@ enum Command {
     ModelUrl,
 }
 
+/// Parses CLI arguments and dispatches the selected PP-DocLayout command.
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Inspect { model } => {
-            let info = inspect_model(model)?;
-            println!("{}", serde_json::to_string_pretty(&info)?);
-        }
         Command::Detect { input_pdf, model } => {
             let outputs = detect_pdf_to_output_dir(input_pdf, model)?;
             println!("wrote {} pages to {}", outputs.len(), DEFAULT_OUTPUT_DIR);

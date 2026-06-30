@@ -1,3 +1,7 @@
 /target
 /models/*.onnx
+/models/*.yml
+/models/.uv-cache
 /output
+/.venv
+__pycache__/

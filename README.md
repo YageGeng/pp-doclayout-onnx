@@ -4,11 +4,11 @@ Minimal Rust runner for PaddlePaddle PP-DocLayoutV3 ONNX using `ort = 2.0.0-rc.1
 
 ## Model
 
-Download the ONNX model from Hugging Face:
+Download the ONNX model and metadata from Hugging Face:
 
 ```bash
-mkdir -p models
-curl -L https://huggingface.co/PaddlePaddle/PP-DocLayoutV3_onnx/resolve/main/inference.onnx -o models/inference.onnx
+uv --cache-dir models/.uv-cache sync
+uv --cache-dir models/.uv-cache run python scripts/download_model.py
 ```
 
 The upstream `inference.yml` defines:
@@ -19,12 +19,6 @@ The upstream `inference.yml` defines:
 - 25 PP-DocLayoutV3 labels
 
 ## Usage
-
-Inspect model inputs and outputs:
-
-```bash
-cargo run --release -- inspect --model models/inference.onnx
-```
 
 Run detection on every page of a PDF:
 
