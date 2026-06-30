@@ -1,11 +1,11 @@
-use anyhow::{bail, Context, Result};
-use image::{imageops::FilterType, DynamicImage, RgbImage};
+use image::{DynamicImage, RgbImage, imageops::FilterType};
 use ndarray::{Array2, Array4};
 
 use super::{OriginalSize, PreprocessedImage, TARGET_SIZE};
+use crate::{Error, Result, ResultExt};
 
 impl TryFrom<&DynamicImage> for PreprocessedImage {
-    type Error = anyhow::Error;
+    type Error = Error;
 
     /// Converts a dynamic image into preprocessed model tensors through RGB normalization.
     fn try_from(image: &DynamicImage) -> Result<Self> {
@@ -14,12 +14,14 @@ impl TryFrom<&DynamicImage> for PreprocessedImage {
 }
 
 impl TryFrom<&RgbImage> for PreprocessedImage {
-    type Error = anyhow::Error;
+    type Error = Error;
 
     /// Converts an RGB image into the resized tensors expected by PP-DocLayoutV3.
     fn try_from(image: &RgbImage) -> Result<Self> {
         if image.width() == 0 || image.height() == 0 {
-            bail!("input image dimensions must be non-zero");
+            return Err(Error::InvalidInput {
+                message: "input image dimensions must be non-zero".to_string(),
+            });
         }
 
         let original_size = OriginalSize::new(image.width(), image.height());

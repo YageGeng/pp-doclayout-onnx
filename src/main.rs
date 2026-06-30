@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
 use clap::{Parser, Subcommand};
-use pp_doclayout_onnx::{detect_pdf_to_output_dir, OrtDocLayout, DEFAULT_OUTPUT_DIR, MODEL_URL};
+use pp_doclayout_onnx::{
+    DEFAULT_OUTPUT_DIR, MODEL_URL, OrtDocLayout, Result, ResultExt, detect_pdf_to_output_dir,
+};
+use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -45,6 +47,7 @@ enum Command {
 
 /// Parses CLI arguments and dispatches the selected PP-DocLayout command.
 fn main() -> Result<()> {
+    init_tracing();
     let cli = Cli::parse();
 
     match cli.command {
@@ -60,7 +63,9 @@ fn main() -> Result<()> {
         } => {
             let mut detector = OrtDocLayout::new(model, threads)?;
             let dumps = detector.dump_image_outputs(image, values)?;
-            println!("{}", serde_json::to_string_pretty(&dumps)?);
+            let json =
+                serde_json::to_string_pretty(&dumps).context("serialize model output dump")?;
+            println!("{json}");
         }
         Command::ModelUrl => {
             println!("{MODEL_URL}");
@@ -68,4 +73,12 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Initializes tracing from `RUST_LOG` while keeping logging optional for CLI users.
+fn init_tracing() {
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .try_init();
 }

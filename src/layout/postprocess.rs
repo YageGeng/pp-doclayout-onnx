@@ -1,7 +1,7 @@
-use anyhow::{anyhow, bail, Context, Result};
 use ndarray::{Array3, ArrayD, Ix2, Ix3};
 
 use super::{Detection, OriginalSize, PPDocLayoutV3Label, TARGET_SIZE};
+use crate::{Error, Result, ResultExt};
 
 /// Parses DETR-style logits and normalized boxes into sorted layout detections.
 pub fn parse_detr_outputs(
@@ -11,7 +11,9 @@ pub fn parse_detr_outputs(
     threshold: f32,
 ) -> Result<Vec<Detection>> {
     if !(0.0..=1.0).contains(&threshold) {
-        bail!("threshold must be in [0, 1], got {threshold}");
+        return Err(Error::InvalidInput {
+            message: format!("threshold must be in [0, 1], got {threshold}"),
+        });
     }
 
     let logits = logits
@@ -27,16 +29,20 @@ pub fn parse_detr_outputs(
     let (box_batch, box_count, box_dims) = (box_shape[0], box_shape[1], box_shape[2]);
 
     if logit_batch != 1 || box_batch != 1 {
-        bail!(
-            "only batch size 1 is supported, got logits batch {logit_batch}, boxes batch {box_batch}"
-        );
+        return Err(Error::ModelOutput {
+            message: format!(
+                "only batch size 1 is supported, got logits batch {logit_batch}, boxes batch {box_batch}"
+            ),
+        });
     }
     if query_count != box_count || box_dims != 4 {
-        bail!(
-            "logits and boxes shape mismatch: logits {:?}, boxes {:?}",
-            logits.shape(),
-            boxes.shape()
-        );
+        return Err(Error::ModelOutput {
+            message: format!(
+                "logits and boxes shape mismatch: logits {:?}, boxes {:?}",
+                logits.shape(),
+                boxes.shape()
+            ),
+        });
     }
 
     let foreground_classes = class_count.min(PPDocLayoutV3Label::class_count());
@@ -69,7 +75,7 @@ pub fn parse_detr_outputs(
         detections.push(Detection {
             class_id: best_class,
             label: PPDocLayoutV3Label::try_from(best_class)
-                .map_err(|error| anyhow!("convert class id {best_class} to label: {error}"))?,
+                .with_context(|| format!("convert class id {best_class} to label"))?,
             score,
             bbox,
             order: None,
@@ -87,7 +93,9 @@ pub fn parse_paddle_fetch_output(
     threshold: f32,
 ) -> Result<Vec<Detection>> {
     if !(0.0..=1.0).contains(&threshold) {
-        bail!("threshold must be in [0, 1], got {threshold}");
+        return Err(Error::InvalidInput {
+            message: format!("threshold must be in [0, 1], got {threshold}"),
+        });
     }
 
     let output = output
@@ -95,7 +103,9 @@ pub fn parse_paddle_fetch_output(
         .context("Paddle fetch output should have shape [boxes, 6 or 7]")?;
     let columns = output.shape()[1];
     if columns != 6 && columns != 7 {
-        bail!("Paddle fetch output should have 6 or 7 columns, got {columns}");
+        return Err(Error::ModelOutput {
+            message: format!("Paddle fetch output should have 6 or 7 columns, got {columns}"),
+        });
     }
 
     let mut detections = Vec::new();

@@ -1,17 +1,17 @@
 use std::{fs, path::Path};
 
-use anyhow::{anyhow, bail, Result};
 use image::DynamicImage;
 use ort::{session::Session, value::TensorRef};
 use serde::Serialize;
+use tracing::{debug, info};
 
 use super::{
-    annotate_page_rgba, parse_detr_outputs, parse_paddle_fetch_output, Detection,
-    PdfPageDetections, PdfPageOutputFile, PreprocessedImage, DEFAULT_DPI, DEFAULT_OUTPUT_DIR,
-    DEFAULT_THRESHOLD,
+    DEFAULT_DPI, DEFAULT_OUTPUT_DIR, DEFAULT_THRESHOLD, Detection, PdfPageDetections,
+    PdfPageOutputFile, PreprocessedImage, annotate_page_rgba, parse_detr_outputs,
+    parse_paddle_fetch_output,
 };
-use crate::pdf::{encode_png_rgba, output_path_for_page, PdfiumSession};
-use crate::PPDocLayoutV3Label;
+use crate::pdf::{PdfiumSession, encode_png_rgba, output_path_for_page};
+use crate::{Error, PPDocLayoutV3Label, Result, ResultExt};
 
 /// Raw f32 output tensor sample used when debugging exporter output formats.
 #[derive(Debug, Clone, Serialize)]
@@ -32,17 +32,18 @@ impl OrtDocLayout {
         let model_path = model_path.as_ref();
         ensure_model_exists(model_path)?;
 
-        let mut builder = Session::builder()
-            .map_err(|error| anyhow!("create ONNX Runtime session builder: {error}"))?;
+        info!(model = %model_path.display(), ?intra_threads, "loading ONNX model");
+        let mut builder = Session::builder().context("create ONNX Runtime session builder")?;
         if let Some(threads) = intra_threads {
             builder = builder
                 .with_intra_threads(threads)
-                .map_err(|error| anyhow!("configure intra-op thread count: {error}"))?;
+                .context("configure intra-op thread count")?;
         }
 
         let session = builder
             .commit_from_file(model_path)
-            .map_err(|error| anyhow!("load ONNX model {}: {error}", model_path.display()))?;
+            .with_context(|| format!("load ONNX model {}", model_path.display()))?;
+        info!(model = %model_path.display(), "loaded ONNX model");
         Ok(Self { session })
     }
 
@@ -53,8 +54,9 @@ impl OrtDocLayout {
         threshold: f32,
     ) -> Result<Vec<Detection>> {
         let image_path = image_path.as_ref();
+        info!(path = %image_path.display(), threshold, "detecting layout in image");
         let image = image::open(image_path)
-            .map_err(|error| anyhow!("open input image {}: {error}", image_path.display()))?;
+            .with_context(|| format!("open input image {}", image_path.display()))?;
         let input = PreprocessedImage::try_from(&image)?;
         self.detect_preprocessed(input, threshold)
     }
@@ -68,9 +70,18 @@ impl OrtDocLayout {
         let pdf = pdfium.open_document(pdf_path)?;
         let mut pages = Vec::new();
         pdf.visit_rendered_pages(DEFAULT_DPI, |rendered| {
+            debug!(
+                page_number = rendered.page_number,
+                "running layout detection for PDF page"
+            );
             let rgb = DynamicImage::ImageRgba8(rendered.rgba.clone()).to_rgb8();
             let input = PreprocessedImage::try_from(&rgb)?;
             let detections = self.detect_preprocessed(input, DEFAULT_THRESHOLD)?;
+            debug!(
+                page_number = rendered.page_number,
+                detections = detections.len(),
+                "detected PDF page layouts"
+            );
             pages.push(PdfPageDetections {
                 page_number: rendered.page_number,
                 width: rendered.width,
@@ -93,8 +104,9 @@ impl OrtDocLayout {
         max_values: usize,
     ) -> Result<Vec<RawTensorDump>> {
         let image_path = image_path.as_ref();
+        info!(path = %image_path.display(), max_values, "dumping raw model outputs");
         let image = image::open(image_path)
-            .map_err(|error| anyhow!("open input image {}: {error}", image_path.display()))?;
+            .with_context(|| format!("open input image {}", image_path.display()))?;
         let input = PreprocessedImage::try_from(&image)?;
         let outputs = self.run_preprocessed(input)?;
 
@@ -143,20 +155,20 @@ impl OrtDocLayout {
             .find(|(_, shape, _)| {
                 shape.len() == 3 && shape[0] == 1 && shape[2] >= PPDocLayoutV3Label::class_count()
             })
-            .ok_or_else(|| {
-                anyhow!(
+            .ok_or_else(|| Error::ModelOutput {
+                message: format!(
                     "could not find DETR logits output; available outputs: {}",
                     format_output_shapes(&arrays)
-                )
+                ),
             })?;
         let (_, _, boxes) = arrays
             .iter()
             .find(|(_, shape, _)| shape.len() == 3 && shape[0] == 1 && shape[2] == 4)
-            .ok_or_else(|| {
-                anyhow!(
+            .ok_or_else(|| Error::ModelOutput {
+                message: format!(
                     "could not find DETR boxes output; available outputs: {}",
                     format_output_shapes(&arrays)
-                )
+                ),
             })?;
 
         parse_detr_outputs(
@@ -173,18 +185,19 @@ impl OrtDocLayout {
         input: PreprocessedImage,
     ) -> Result<ort::session::SessionOutputs<'_>> {
         let image_tensor = TensorRef::from_array_view(&input.tensor)
-            .map_err(|error| anyhow!("create ONNX tensor from preprocessed image: {error}"))?;
-        let im_shape_tensor = TensorRef::from_array_view(&input.im_shape)
-            .map_err(|error| anyhow!("create ONNX im_shape tensor: {error}"))?;
+            .context("create ONNX tensor from preprocessed image")?;
+        let im_shape_tensor =
+            TensorRef::from_array_view(&input.im_shape).context("create ONNX im_shape tensor")?;
         let scale_factor_tensor = TensorRef::from_array_view(&input.scale_factor)
-            .map_err(|error| anyhow!("create ONNX scale_factor tensor: {error}"))?;
+            .context("create ONNX scale_factor tensor")?;
+        debug!("running ONNX inference");
         self.session
             .run(ort::inputs! {
                 "im_shape" => im_shape_tensor,
                 "image" => image_tensor,
                 "scale_factor" => scale_factor_tensor,
             })
-            .map_err(|error| anyhow!("run ONNX inference: {error}"))
+            .context("run ONNX inference")
     }
 
     /// Detects layouts in a PDF and writes annotated PNG plus JSON per page.
@@ -195,12 +208,17 @@ impl OrtDocLayout {
     ) -> Result<Vec<PdfPageOutputFile>> {
         let output_dir = output_dir.as_ref();
         fs::create_dir_all(output_dir)
-            .map_err(|error| anyhow!("create output dir {}: {error}", output_dir.display()))?;
+            .with_context(|| format!("create output dir {}", output_dir.display()))?;
 
+        info!(output_dir = %output_dir.display(), "detecting PDF layouts to output directory");
         let pdfium = PdfiumSession::new();
         let pdf = pdfium.open_document(pdf_path)?;
         let mut outputs = Vec::new();
         pdf.visit_rendered_pages(DEFAULT_DPI, |mut rendered| {
+            debug!(
+                page_number = rendered.page_number,
+                "processing rendered PDF page"
+            );
             let rgb = DynamicImage::ImageRgba8(rendered.rgba.clone()).to_rgb8();
             let input = PreprocessedImage::try_from(&rgb)?;
             let detections = self.detect_preprocessed(input, DEFAULT_THRESHOLD)?;
@@ -208,10 +226,9 @@ impl OrtDocLayout {
 
             let image_path = output_path_for_page(output_dir, rendered.page_number, "png");
             let json_path = output_path_for_page(output_dir, rendered.page_number, "json");
-            let png_bytes = encode_png_rgba(&rendered.rgba)
-                .map_err(|error| anyhow!("encode page {} PNG: {error}", rendered.page_number))?;
+            let png_bytes = encode_png_rgba(&rendered.rgba)?;
             fs::write(&image_path, png_bytes)
-                .map_err(|error| anyhow!("write {}: {error}", image_path.display()))?;
+                .with_context(|| format!("write {}", image_path.display()))?;
 
             let page_output = PdfPageDetections {
                 page_number: rendered.page_number,
@@ -222,11 +239,17 @@ impl OrtDocLayout {
                 dpi: DEFAULT_DPI,
                 detections,
             };
-            let json = serde_json::to_vec_pretty(&page_output).map_err(|error| {
-                anyhow!("serialize page {} JSON: {error}", rendered.page_number)
-            })?;
+            let json = serde_json::to_vec_pretty(&page_output)
+                .with_context(|| format!("serialize page {} JSON", rendered.page_number))?;
             fs::write(&json_path, json)
-                .map_err(|error| anyhow!("write {}: {error}", json_path.display()))?;
+                .with_context(|| format!("write {}", json_path.display()))?;
+            debug!(
+                page_number = rendered.page_number,
+                detections = page_output.detections.len(),
+                image_path = %image_path.display(),
+                json_path = %json_path.display(),
+                "wrote PDF page outputs"
+            );
 
             outputs.push(PdfPageOutputFile {
                 page_number: rendered.page_number,
@@ -256,10 +279,9 @@ fn ensure_model_exists(model_path: &Path) -> Result<()> {
         return Ok(());
     }
 
-    bail!(
-        "model file does not exist: {}\ndownload it with:\n  uv --cache-dir models/.uv-cache run python scripts/download_model.py",
-        model_path.display()
-    );
+    Err(Error::MissingModel {
+        path: model_path.to_path_buf(),
+    })
 }
 
 /// Formats model output tensor names and shapes for parser error messages.

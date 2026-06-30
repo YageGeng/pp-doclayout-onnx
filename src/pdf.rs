@@ -1,8 +1,10 @@
 use std::{fs, path::Path};
 
-use anyhow::{anyhow, bail, Context, Result};
-use image::{codecs::png::PngEncoder, ColorType, ImageEncoder, RgbaImage};
+use image::{ColorType, ImageEncoder, RgbaImage, codecs::png::PngEncoder};
 use pdfium::{Document, Library};
+use tracing::{debug, info};
+
+use crate::{Error, Result, ResultExt};
 
 /// A single rendered PDF page with an RGBA buffer suitable for annotation.
 #[derive(Debug, Clone)]
@@ -36,6 +38,8 @@ impl PdfiumSession {
 
     /// Reads and loads a PDF document once for repeated page rendering.
     pub fn open_document(&self, pdf_path: impl AsRef<Path>) -> Result<LoadedPdfDocument<'_>> {
+        let pdf_path = pdf_path.as_ref();
+        info!(path = %pdf_path.display(), "opening PDF document");
         LoadedPdfDocument::open(&self.library, pdf_path)
     }
 }
@@ -54,7 +58,8 @@ impl<'lib> LoadedPdfDocument<'lib> {
             fs::read(pdf_path).with_context(|| format!("read PDF {}", pdf_path.display()))?;
         let document = library
             .load_document_from_bytes(&pdf_bytes, None)
-            .map_err(|error| anyhow!("load PDF {}: {error}", pdf_path.display()))?;
+            .with_context(|| format!("load PDF {}", pdf_path.display()))?;
+        debug!(path = %pdf_path.display(), bytes = pdf_bytes.len(), "loaded PDF bytes");
 
         Ok(Self {
             document,
@@ -64,34 +69,42 @@ impl<'lib> LoadedPdfDocument<'lib> {
 
     /// Returns the number of pages in the loaded PDF document.
     pub fn page_count(&self) -> Result<usize> {
-        usize::try_from(self.document.page_count())
-            .map_err(|error| anyhow!("convert PDF page count: {error}"))
+        usize::try_from(self.document.page_count()).map_err(|error| Error::InvalidInput {
+            message: format!("convert PDF page count: {error}"),
+        })
     }
 
     /// Renders one zero-based page from the loaded PDF document.
     pub fn render_page(&self, page_index: usize, dpi: f32) -> Result<RenderedPdfPage> {
         if dpi <= 0.0 {
-            bail!("dpi must be greater than zero, got {dpi}");
+            return Err(Error::InvalidInput {
+                message: format!("dpi must be greater than zero, got {dpi}"),
+            });
         }
 
         let page_number = page_index as u32 + 1;
-        let pdfium_page_index = i32::try_from(page_index)
-            .map_err(|error| anyhow!("convert PDF page index {page_index}: {error}"))?;
+        let pdfium_page_index = i32::try_from(page_index).map_err(|error| Error::InvalidInput {
+            message: format!("convert PDF page index {page_index}: {error}"),
+        })?;
+        debug!(page_number, dpi, "rendering PDF page");
         let page = self
             .document
             .page(pdfium_page_index)
-            .map_err(|error| anyhow!("load PDF page {page_number}: {error}"))?;
+            .with_context(|| format!("load PDF page {page_number}"))?;
         let page_width = page.width();
         let page_height = page.height();
         let bitmap = page
             .render(dpi)
-            .map_err(|error| anyhow!("render PDF page {page_number}: {error}"))?;
+            .with_context(|| format!("render PDF page {page_number}"))?;
         let width = bitmap.width() as u32;
         let height = bitmap.height() as u32;
         let rgba = bitmap.to_rgba();
-        let rgba = RgbaImage::from_raw(width, height, rgba).ok_or_else(|| {
-            anyhow!("PDF page {page_number} rendered RGBA buffer does not match {width}x{height}")
+        let rgba = RgbaImage::from_raw(width, height, rgba).ok_or_else(|| Error::ModelOutput {
+            message: format!(
+                "PDF page {page_number} rendered RGBA buffer does not match {width}x{height}"
+            ),
         })?;
+        debug!(page_number, width, height, "rendered PDF page");
 
         Ok(RenderedPdfPage {
             page_number,
@@ -109,7 +122,9 @@ impl<'lib> LoadedPdfDocument<'lib> {
         dpi: f32,
         mut visitor: impl FnMut(RenderedPdfPage) -> Result<()>,
     ) -> Result<()> {
-        for page_index in 0..self.page_count()? {
+        let page_count = self.page_count()?;
+        info!(page_count, dpi, "rendering PDF pages");
+        for page_index in 0..page_count {
             visitor(self.render_page(page_index, dpi)?)?;
         }
 

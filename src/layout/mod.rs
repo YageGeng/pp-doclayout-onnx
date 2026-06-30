@@ -9,7 +9,7 @@ pub mod model;
 pub mod postprocess;
 pub mod preprocess;
 
-pub use model::{detect_pdf_to_output_dir, OrtDocLayout, RawTensorDump};
+pub use model::{OrtDocLayout, RawTensorDump, detect_pdf_to_output_dir};
 pub use postprocess::{cxcywh_to_xyxy, parse_detr_outputs, parse_paddle_fetch_output};
 pub use preprocess::image_to_nchw_rgb;
 

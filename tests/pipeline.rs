@@ -1,9 +1,9 @@
 use image::{Rgb, RgbImage};
 use ndarray::{Array2, Array3};
 use pp_doclayout_onnx::{
-    cxcywh_to_xyxy, image_to_nchw_rgb, output_path_for_page, parse_detr_outputs,
-    parse_paddle_fetch_output, OriginalSize, PPDocLayoutV3Label, PdfPageDetections, DEFAULT_DPI,
-    DEFAULT_THRESHOLD, PP_DOCLAYOUT_V3_LABELS,
+    DEFAULT_DPI, DEFAULT_THRESHOLD, OriginalSize, PP_DOCLAYOUT_V3_LABELS, PPDocLayoutV3Label,
+    PdfPageDetections, cxcywh_to_xyxy, image_to_nchw_rgb, output_path_for_page, parse_detr_outputs,
+    parse_paddle_fetch_output,
 };
 
 #[test]
