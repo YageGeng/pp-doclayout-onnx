@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use ort::session::builder::SessionBuilder;
+#[cfg(feature = "native")]
 use pdfium::PdfiumError;
 use thiserror::Error as ThisError;
 
@@ -32,6 +33,7 @@ pub enum Error {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Shape(#[from] ndarray::ShapeError),
+    #[cfg(feature = "native")]
     #[error(transparent)]
     Pdfium(#[from] PdfiumError),
     #[error(transparent)]

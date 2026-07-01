@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PP-DocLayout WASM Test</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+          sans-serif;
+        background: #f6f7f9;
+        color: #1f2933;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      main {
+        box-sizing: border-box;
+        display: grid;
+        grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+        gap: 20px;
+        min-height: 100vh;
+        padding: 20px;
+      }
+
+      aside,
+      .preview,
+      .json-panel,
+      .legend {
+        border: 1px solid #d8dde6;
+        border-radius: 8px;
+        background: #ffffff;
+      }
+
+      aside {
+        align-self: start;
+        padding: 16px;
+      }
+
+      h1 {
+        margin: 0 0 16px;
+        font-size: 20px;
+        font-weight: 650;
+      }
+
+      label {
+        display: grid;
+        gap: 6px;
+        margin: 0 0 14px;
+        font-size: 13px;
+        font-weight: 600;
+        color: #344054;
+      }
+
+      input,
+      button {
+        box-sizing: border-box;
+        min-height: 36px;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        padding: 8px 10px;
+        font: inherit;
+      }
+
+      button {
+        width: 100%;
+        border-color: #1769aa;
+        background: #1769aa;
+        color: #ffffff;
+        cursor: pointer;
+        font-weight: 650;
+      }
+
+      button:disabled {
+        border-color: #aab4c0;
+        background: #aab4c0;
+        cursor: wait;
+      }
+
+      .status {
+        min-height: 22px;
+        margin-top: 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        color: #475467;
+        overflow-wrap: anywhere;
+      }
+
+      .legend {
+        margin-top: 16px;
+        padding: 12px;
+      }
+
+      .legend-title {
+        margin: 0 0 10px;
+        font-size: 13px;
+        font-weight: 650;
+        color: #344054;
+      }
+
+      .legend-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+        gap: 7px 10px;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        min-width: 0;
+        gap: 7px;
+        font-size: 12px;
+        color: #344054;
+      }
+
+      .legend-swatch {
+        width: 12px;
+        height: 12px;
+        flex: 0 0 auto;
+        border-radius: 3px;
+        box-shadow: inset 0 0 0 1px rgb(0 0 0 / 16%);
+      }
+
+      .preview {
+        overflow: auto;
+        padding: 12px;
+      }
+
+      .results {
+        display: grid;
+        gap: 20px;
+        align-content: start;
+        min-width: 0;
+      }
+
+      .page-result {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .page-title {
+        grid-column: 1 / -1;
+        margin: 0;
+        font-size: 15px;
+        font-weight: 650;
+      }
+
+      canvas {
+        display: block;
+        max-width: 100%;
+        height: auto;
+        background: #ffffff;
+      }
+
+      .page-canvas {
+        cursor: pointer;
+      }
+
+      .json-panel {
+        min-width: 0;
+        overflow: auto;
+      }
+
+      .json-panel[hidden] {
+        display: none;
+      }
+
+      pre {
+        margin: 0;
+        padding: 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 12px;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 820px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+
+        .page-result {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <aside>
+        <h1>PP-DocLayout WASM Test</h1>
+        <label>
+          Model URL
+          <input id="modelUrl" value="../models/inference.onnx" />
+        </label>
+        <label>
+          ORT Web dist
+          <input
+            id="ortDist"
+            value="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.2/dist/"
+          />
+        </label>
+        <label>
+          Threshold
+          <input id="threshold" type="number" min="0" max="1" step="0.05" value="0.5" />
+        </label>
+        <label>
+          PDF or image
+          <input id="file" type="file" accept="application/pdf,image/png,image/jpeg" />
+        </label>
+        <button id="run" type="button">Run Detection</button>
+        <div id="status" class="status">Build with wasm-pack, then choose a file.</div>
+        <div class="legend">
+          <div class="legend-title">Labels</div>
+          <div id="legendList" class="legend-list"></div>
+        </div>
+      </aside>
+
+      <section id="results" class="results"></section>
+    </main>
+
+    <script type="module">
+      import init, { BrowserDocLayout, annotateRgba, labelLegend } from "./pkg/pp_doclayout_onnx.js";
+      import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.mjs";
+
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.mjs";
+
+      const elements = {
+        modelUrl: document.querySelector("#modelUrl"),
+        ortDist: document.querySelector("#ortDist"),
+        threshold: document.querySelector("#threshold"),
+        file: document.querySelector("#file"),
+        run: document.querySelector("#run"),
+        status: document.querySelector("#status"),
+        results: document.querySelector("#results"),
+        legendList: document.querySelector("#legendList"),
+      };
+      let detector = null;
+      let wasmReady = null;
+      let loadedModelUrl = "";
+      let loadedOrtDist = "";
+
+      // Updates the visible status line and mirrors it to the console for debugging.
+      function setStatus(message) {
+        elements.status.textContent = message;
+        console.log(message);
+      }
+
+      // Renders label colors from Rust-owned metadata exposed by the WASM module.
+      function renderLabelLegend(items) {
+        elements.legendList.textContent = "";
+        for (const item of items) {
+          const row = document.createElement("div");
+          row.className = "legend-item";
+          const swatch = document.createElement("span");
+          swatch.className = "legend-swatch";
+          swatch.style.background = item.color;
+          const label = document.createElement("span");
+          label.textContent = item.label;
+          row.append(swatch, label);
+          elements.legendList.append(row);
+        }
+      }
+
+      // Initializes the WASM module once and renders Rust-owned label metadata.
+      async function ensureWasmInitialized() {
+        if (!wasmReady) {
+          wasmReady = init()
+            .then(() => {
+              renderLabelLegend(labelLegend());
+            })
+            .catch((error) => {
+              wasmReady = null;
+              throw error;
+            });
+        }
+
+        await wasmReady;
+      }
+
+      // Lazily loads the WASM module and reuses the detector until model settings change.
+      async function getDetector() {
+        const modelUrl = elements.modelUrl.value.trim();
+        const ortDist = elements.ortDist.value.trim();
+        if (!modelUrl) {
+          throw new Error("Model URL is required.");
+        }
+
+        if (!detector || modelUrl !== loadedModelUrl || ortDist !== loadedOrtDist) {
+          setStatus("Loading WASM module and model...");
+          await ensureWasmInitialized();
+          detector = await BrowserDocLayout.load(modelUrl, ortDist || undefined);
+          loadedModelUrl = modelUrl;
+          loadedOrtDist = ortDist;
+        }
+
+        detector.threshold = Number(elements.threshold.value);
+        return detector;
+      }
+
+      // Converts an image upload into the same one-page stream shape as PDF rendering.
+      async function* renderImageFile(file) {
+        const bitmap = await createImageBitmap(file);
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        context.drawImage(bitmap, 0, 0);
+        yield { pageNumber: 1, pageCount: 1, canvas };
+      }
+
+      // Streams rendered PDF pages one at a time to avoid retaining all canvases.
+      async function* renderPdfPages(file) {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const pdf = await pdfjsLib.getDocument({ data: bytes }).promise;
+
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+          setStatus(`Rendering PDF page ${pageNumber} / ${pdf.numPages}...`);
+          const page = await pdf.getPage(pageNumber);
+          const viewport = page.getViewport({ scale: 96 / 72 });
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          const context = canvas.getContext("2d", { willReadFrequently: true });
+          await page.render({ canvasContext: context, viewport }).promise;
+          yield { pageNumber, pageCount: pdf.numPages, canvas };
+        }
+      }
+
+      // Selects the renderer for PDF files and regular browser-decodable images.
+      function renderSelectedFile(file) {
+        if (file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf")) {
+          return renderPdfPages(file);
+        }
+
+        return renderImageFile(file);
+      }
+
+      // Appends one annotated page image and its click-to-toggle JSON payload.
+      function appendResult(pageNumber, result, annotatedRgba) {
+        const article = document.createElement("article");
+        article.className = "page-result";
+
+        const title = document.createElement("h2");
+        title.className = "page-title";
+        title.textContent = `Page ${pageNumber}`;
+
+        const preview = document.createElement("div");
+        preview.className = "preview";
+        const canvas = document.createElement("canvas");
+        canvas.className = "page-canvas";
+        canvas.title = "Click to show or hide JSON";
+        const annotated = new ImageData(annotatedRgba, result.width, result.height);
+        canvas.width = annotated.width;
+        canvas.height = annotated.height;
+        canvas.getContext("2d").putImageData(annotated, 0, 0);
+        preview.append(canvas);
+
+        const jsonPanel = document.createElement("div");
+        jsonPanel.className = "json-panel";
+        jsonPanel.hidden = true;
+        const pre = document.createElement("pre");
+        pre.textContent = JSON.stringify({ page_number: pageNumber, ...result }, null, 2);
+        jsonPanel.append(pre);
+        canvas.addEventListener("click", () => {
+          jsonPanel.hidden = !jsonPanel.hidden;
+        });
+
+        article.append(title, preview, jsonPanel);
+        elements.results.append(article);
+      }
+
+      // Runs detection and explicit annotation for every rendered input page.
+      async function runDetection() {
+        const file = elements.file.files?.[0];
+        if (!file) {
+          setStatus("Choose a PDF or image first.");
+          return;
+        }
+
+        elements.run.disabled = true;
+        elements.results.textContent = "";
+        try {
+          const activeDetector = await getDetector();
+          setStatus("Rendering input...");
+          let totalDetections = 0;
+          let processedPages = 0;
+
+          for await (const page of renderSelectedFile(file)) {
+            const context = page.canvas.getContext("2d", { willReadFrequently: true });
+            const imageData = context.getImageData(0, 0, page.canvas.width, page.canvas.height);
+            setStatus(`Running Rust WASM layout detection for page ${page.pageNumber} / ${page.pageCount}...`);
+            const result = await activeDetector.detectRgba(
+              imageData.data,
+              imageData.width,
+              imageData.height,
+            );
+            const annotatedRgba = annotateRgba(
+              imageData.data,
+              imageData.width,
+              imageData.height,
+              result.detections,
+            );
+            processedPages += 1;
+            totalDetections += result.detections.length;
+            appendResult(page.pageNumber, result, annotatedRgba);
+          }
+
+          setStatus(`Processed ${processedPages} page(s), detected ${totalDetections} regions.`);
+        } catch (error) {
+          console.error(error);
+          const pre = document.createElement("pre");
+          pre.textContent = JSON.stringify({ error: String(error) }, null, 2);
+          const panel = document.createElement("div");
+          panel.className = "json-panel";
+          panel.append(pre);
+          elements.results.append(panel);
+          setStatus(String(error));
+        } finally {
+          elements.run.disabled = false;
+        }
+      }
+
+      elements.run.addEventListener("click", runDetection);
+      ensureWasmInitialized().catch((error) => {
+        console.error(error);
+        setStatus(String(error));
+      });
+    </script>
+  </body>
+</html>

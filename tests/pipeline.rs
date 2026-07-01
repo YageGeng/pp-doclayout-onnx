@@ -33,7 +33,156 @@ fn pdf_detection_defaults_match_model_config() {
 fn ort_dependency_enables_webgpu_feature() {
     let manifest = include_str!("../Cargo.toml");
 
-    assert!(manifest.contains("\"webgpu\""));
+    assert!(manifest.contains("ort/webgpu"));
+}
+
+#[test]
+fn manifest_exposes_browser_wasm_feature() {
+    let manifest = include_str!("../Cargo.toml");
+
+    assert!(manifest.contains("crate-type = [\"cdylib\", \"rlib\"]"));
+    assert!(manifest.contains("wasm = ["));
+    assert!(manifest.contains("\"api-21\""));
+    assert!(!manifest.contains("\"api-22\""));
+    assert!(!manifest.contains("\"api-24\""));
+    assert!(manifest.contains("ort/alternative-backend"));
+    assert!(manifest.contains("dep:ort-web"));
+    assert!(manifest.contains("dep:wasm-bindgen"));
+    assert!(manifest.contains("dep:tracing-wasm"));
+}
+
+#[test]
+fn browser_test_harness_is_checked_in() {
+    let html = std::fs::read_to_string("web/index.html")
+        .expect("web/index.html should be checked in for manual browser testing");
+
+    assert!(html.contains("document.createElement(\"canvas\")"));
+    assert!(html.contains("type=\"file\""));
+    assert!(html.contains("application/pdf"));
+    assert!(html.contains("JSON.stringify"));
+    assert!(!html.contains("onnxruntime.js"));
+}
+
+#[test]
+fn browser_test_harness_runs_all_pdf_pages_by_default() {
+    let html = std::fs::read_to_string("web/index.html")
+        .expect("web/index.html should be checked in for manual browser testing");
+
+    assert!(!html.contains("id=\"pageNumber\""));
+    assert!(html.contains("for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1)"));
+    assert!(html.contains("renderPdfPages"));
+    assert!(html.contains("appendResult"));
+}
+
+#[test]
+fn browser_test_harness_streams_pdf_pages_without_caching_all_canvases() {
+    let html = std::fs::read_to_string("web/index.html")
+        .expect("web/index.html should be checked in for manual browser testing");
+
+    assert!(html.contains("async function* renderPdfPages"));
+    assert!(html.contains("for await (const page of renderSelectedFile(file))"));
+    assert!(html.contains("yield { pageNumber, pageCount: pdf.numPages, canvas }"));
+    assert!(!html.contains("pages.push"));
+}
+
+#[test]
+fn wasm_tracing_defaults_to_debug() {
+    let wasm = std::fs::read_to_string("src/wasm.rs")
+        .expect("src/wasm.rs should configure browser diagnostics");
+
+    assert!(wasm.contains("set_max_level(tracing::Level::DEBUG)"));
+    assert!(!wasm.contains("try_set_as_global_default()"));
+}
+
+#[test]
+fn wasm_inference_uses_js_owned_ort_web_tensors() {
+    let wasm = std::fs::read_to_string("src/wasm.rs")
+        .expect("src/wasm.rs should configure browser inference");
+
+    assert!(wasm.contains("session: InferenceSession"));
+    assert!(wasm.contains("InferenceSession::create"));
+    assert!(!wasm.contains("JsInferenceSession"));
+    assert!(wasm.contains("Float32Array::new_with_length"));
+    assert!(wasm.contains("copy_from(data)"));
+    assert!(wasm.contains("JsTensor::new(\"float32\""));
+    assert!(!wasm.contains("session: ort::session::Session"));
+    assert!(!wasm.contains("TensorRef::from_array_view"));
+    assert!(!wasm.contains(".run_async("));
+    assert!(!wasm.contains("ort_web::sync_outputs"));
+}
+
+#[test]
+fn wasm_detection_and_annotation_are_separate_exports() {
+    let wasm = std::fs::read_to_string("src/wasm.rs")
+        .expect("src/wasm.rs should configure browser inference");
+
+    assert!(wasm.contains("js_name = annotateRgba"));
+    assert!(wasm.contains("pub fn annotate_rgba"));
+    assert!(wasm.contains("json_object(&page)"));
+    assert!(wasm.contains("annotate_page_rgba(&mut image, &detections)"));
+    assert!(!wasm.contains("result_object(&page, image.as_raw())"));
+}
+
+#[test]
+fn browser_test_harness_calls_annotation_explicitly() {
+    let html = std::fs::read_to_string("web/index.html")
+        .expect("web/index.html should be checked in for manual browser testing");
+
+    assert!(html.contains("{ BrowserDocLayout, annotateRgba, labelLegend }"));
+    assert!(html.contains("const annotatedRgba = annotateRgba("));
+    assert!(html.contains("appendResult(page.pageNumber, result, annotatedRgba)"));
+    assert!(!html.contains("result.rgba"));
+    assert!(!html.contains("result.json.detections.length"));
+}
+
+#[test]
+fn browser_test_harness_hides_json_until_page_image_click() {
+    let html = std::fs::read_to_string("web/index.html")
+        .expect("web/index.html should be checked in for manual browser testing");
+
+    assert!(html.contains("jsonPanel.hidden = true"));
+    assert!(html.contains("canvas.addEventListener(\"click\""));
+    assert!(html.contains(".json-panel[hidden]"));
+    assert!(!html.contains("grid-template-columns: minmax(280px, 1fr) minmax(280px, 420px)"));
+}
+
+#[test]
+fn browser_test_harness_renders_label_legend_from_wasm() {
+    let html = std::fs::read_to_string("web/index.html")
+        .expect("web/index.html should be checked in for manual browser testing");
+
+    assert!(html.contains("class=\"legend\""));
+    assert!(html.contains("{ BrowserDocLayout, annotateRgba, labelLegend }"));
+    assert!(html.contains("renderLabelLegend(labelLegend())"));
+    assert!(html.contains("item.color"));
+    assert!(html.contains("item.label"));
+    assert!(!html.contains("style=\"background:"));
+}
+
+#[test]
+fn browser_test_harness_initializes_wasm_once_for_label_legend() {
+    let html = std::fs::read_to_string("web/index.html")
+        .expect("web/index.html should be checked in for manual browser testing");
+
+    assert!(html.contains("let wasmReady = null"));
+    assert!(html.contains("async function ensureWasmInitialized()"));
+    assert!(html.contains("renderLabelLegend(labelLegend())"));
+    assert!(html.contains("await ensureWasmInitialized()"));
+}
+
+#[test]
+fn wasm_exports_label_legend_from_rust_label_definitions() {
+    let wasm = std::fs::read_to_string("src/wasm.rs")
+        .expect("src/wasm.rs should expose browser label metadata");
+    let labels =
+        std::fs::read_to_string("src/label.rs").expect("src/label.rs should own label metadata");
+
+    assert!(wasm.contains("js_name = labelLegend"));
+    assert!(wasm.contains("pub fn label_legend"));
+    assert!(wasm.contains("label_info()"));
+    assert!(labels.contains("pub struct LabelLegendItem"));
+    assert!(labels.contains("pub fn label_info()"));
+    assert!(labels.contains("debug_color_hex"));
 }
 
 #[test]

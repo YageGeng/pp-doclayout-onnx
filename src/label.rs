@@ -1,6 +1,6 @@
 use std::{fmt, str::FromStr};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// PP-DocLayoutV3 class labels in the same order as the model class ids.
 pub const PP_DOCLAYOUT_V3_LABELS: [PPDocLayoutV3Label; 25] = [
@@ -32,7 +32,7 @@ pub const PP_DOCLAYOUT_V3_LABELS: [PPDocLayoutV3Label; 25] = [
 ];
 
 /// Layout category emitted by PP-DocLayoutV3.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PPDocLayoutV3Label {
     Abstract,
@@ -60,6 +60,13 @@ pub enum PPDocLayoutV3Label {
     Text,
     VerticalText,
     VisionFootnote,
+}
+
+/// Browser-facing label metadata used to render the same colors as Rust annotations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct LabelLegendItem {
+    pub label: &'static str,
+    pub color: String,
 }
 
 impl PPDocLayoutV3Label {
@@ -129,6 +136,23 @@ impl PPDocLayoutV3Label {
             Self::VisionFootnote => [0xEC, 0x40, 0x7A, 255],
         }
     }
+
+    /// Returns the stable debug color as a CSS hex color string.
+    pub fn debug_color_hex(self) -> String {
+        let [red, green, blue, _alpha] = self.debug_color_rgba();
+        format!("#{red:02X}{green:02X}{blue:02X}")
+    }
+}
+
+/// Returns all PP-DocLayoutV3 labels with the colors used by annotation rendering.
+pub fn label_info() -> Vec<LabelLegendItem> {
+    PP_DOCLAYOUT_V3_LABELS
+        .iter()
+        .map(|label| LabelLegendItem {
+            label: label.as_str(),
+            color: label.debug_color_hex(),
+        })
+        .collect()
 }
 
 impl TryFrom<usize> for PPDocLayoutV3Label {

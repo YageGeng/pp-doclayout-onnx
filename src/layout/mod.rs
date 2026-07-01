@@ -3,12 +3,14 @@ use std::path::PathBuf;
 use image::{Rgba, RgbaImage};
 use imageproc::{drawing::draw_hollow_rect_mut, rect::Rect};
 use ndarray::Array4;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "native")]
 pub mod model;
 pub mod postprocess;
 pub mod preprocess;
 
+#[cfg(feature = "native")]
 pub use model::{OrtDocLayout, RawTensorDump, detect_pdf_to_output_dir};
 pub use postprocess::{cxcywh_to_xyxy, parse_detr_outputs, parse_paddle_fetch_output};
 pub use preprocess::image_to_nchw_rgb;
@@ -50,7 +52,7 @@ pub struct PreprocessedImage {
     pub original_size: OriginalSize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Detection {
     pub class_id: usize,
     pub label: PPDocLayoutV3Label,
